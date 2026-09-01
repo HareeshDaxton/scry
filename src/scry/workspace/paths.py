@@ -15,6 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from scry.storage.db import DATABASE_FILENAME
 from scry.util.paths import scry_home
 
 MARKER_FILENAME = ".scry"
@@ -41,12 +42,16 @@ class WorkspacePaths:
         return self.root / MARKER_FILENAME
 
     @property
-    def session_db(self) -> Path:
-        return self.root / "session.db"
+    def database(self) -> Path:
+        """The single SQLite file: session state and knowledge graph together.
 
-    @property
-    def graph_db(self) -> Path:
-        return self.root / "graph.db"
+        Spec sections 6.1 and 11.2 show ``session.db`` and ``graph.db``
+        separately. Section 1.5 merged them, because the analyses this product
+        exists for are cross-domain joins — salience over churn and ownership and
+        exposure, CR-9 over CVEs and the call graph — and those are ordinary SQL
+        in one file and an ATTACH dance across two.
+        """
+        return self.root / DATABASE_FILENAME
 
     @property
     def config(self) -> Path:
