@@ -26,12 +26,7 @@ AWS_KEY = "AKIA" + ("EXAMPLEONLY" + "0" * 16)[:16]
 OPENAI_KEY = "sk-proj-" + ("EXAMPLEONLY" + "0" * 24)[:24]
 
 
-@pytest.fixture(autouse=True)
-def isolated_logging():
-    """Logger objects are process-global; without this, config leaks between tests."""
-    reset_logging()
-    yield
-    reset_logging()
+# The autouse logging isolation lives in conftest and covers this module too.
 
 
 @pytest.fixture
