@@ -164,7 +164,8 @@ def _build_context(
     handler on stderr as well would print each config warning twice and, worse,
     would put an unexpected exception's whole traceback on the terminal.
     """
-    from scry.config import load_config
+    from scry.config import Config, load_config
+    from scry.util.errors import ConfigError
     from scry.util.logging import setup_logging
 
     overrides: dict[str, Any] = {}
@@ -175,12 +176,22 @@ def _build_context(
     config_path = (
         Path(options.config) if options.config else (home or scry_home(env)) / "config.yaml"
     )
-    config = load_config(
-        global_path=config_path,
-        env=env,
-        cli_overrides=overrides,
-        on_warning=warnings.append,
-    )
+
+    # An unloadable config must not stop `scry doctor` from running: refusing to
+    # start the diagnostic because the thing it diagnoses is broken would be
+    # absurd. So the failure is captured rather than raised, and `run()` refuses
+    # to continue for every command except doctor.
+    config_error: str | None = None
+    try:
+        config = load_config(
+            global_path=config_path,
+            env=env,
+            cli_overrides=overrides,
+            on_warning=warnings.append,
+        )
+    except ConfigError as exc:
+        config_error = str(exc)
+        config = Config()
 
     logger = setup_logging(
         config,
@@ -205,6 +216,8 @@ def _build_context(
         logger=logger,
         console=console,
         home=home,
+        config_path=config_path,
+        config_error=config_error,
         json_output=options.json_output,
         verbose=options.verbose,
     )
@@ -241,6 +254,15 @@ def run(
             ctx.console.error(split_error)
             ctx.console.hint(f"Run '{PROGRAM} --help' to see available options.")
             return ExitCode.USAGE
+
+        # Doctor exists to diagnose exactly this, so it alone may run with a
+        # broken configuration. Every other command stops: silently substituting
+        # defaults would mean a weight the user set is ignored while the
+        # analysis proceeds as though it were honoured.
+        if ctx.config_error is not None and token != "doctor":
+            ctx.console.error(ctx.config_error)
+            ctx.console.hint("Run 'scry doctor' for a full diagnosis.")
+            return ExitCode.ERROR
 
         if token is None:
             if options.show_version:
