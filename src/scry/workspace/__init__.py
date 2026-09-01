@@ -35,6 +35,7 @@ from scry.workspace.manager import (
     iter_workspaces,
     list_workspaces,
     resolve_workspace,
+    same_path,
 )
 from scry.workspace.marker import MARKER_SCHEMA_VERSION, VALID_MODES, WorkspaceMarker
 from scry.workspace.paths import MARKER_FILENAME, WorkspacePaths, workspaces_dir
@@ -59,6 +60,7 @@ __all__ = [
     "looks_like_workspace_id",
     "parse_workspace_id",
     "resolve_workspace",
+    "same_path",
     "validate_workspace_name",
     "workspaces_dir",
 ]
