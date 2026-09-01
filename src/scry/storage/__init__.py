@@ -27,6 +27,15 @@ Public API::
         conn.execute("SELECT ...").fetchall()
 """
 
+from scry.storage.claims import (
+    ID_LENGTH,
+    Claim,
+    Evidence,
+    append_claim,
+    append_claims,
+    pending_depth,
+    wait_for_capacity,
+)
 from scry.storage.db import (
     BUSY_TIMEOUT_MS,
     DATABASE_FILENAME,
@@ -37,6 +46,12 @@ from scry.storage.db import (
     journal_mode,
     reader,
     writer,
+)
+from scry.storage.merge import (
+    DEFAULT_BATCH_SIZE,
+    MergeResult,
+    merge_checkpoint,
+    merge_claims,
 )
 from scry.storage.migrate import (
     Migration,
@@ -52,7 +67,14 @@ from scry.storage.migrate import (
 __all__ = [
     "BUSY_TIMEOUT_MS",
     "DATABASE_FILENAME",
+    "DEFAULT_BATCH_SIZE",
+    "ID_LENGTH",
+    "Claim",
+    "Evidence",
+    "MergeResult",
     "Migration",
+    "append_claim",
+    "append_claims",
     "apply_migration",
     "connect_reader",
     "connect_writer",
@@ -63,8 +85,12 @@ __all__ = [
     "initialise_database",
     "journal_mode",
     "latest_version",
+    "merge_checkpoint",
+    "merge_claims",
     "migrate",
+    "pending_depth",
     "reader",
     "split_statements",
+    "wait_for_capacity",
     "writer",
 ]

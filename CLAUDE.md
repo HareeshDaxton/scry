@@ -32,21 +32,25 @@ prose differs. Never introduce a code path where a missing model changes *what i
 This project uses [uv](https://docs.astral.sh/uv/). Do not use bare `pip` or `python`.
 
 ```bash
-uv sync                              # create/refresh the env, installs dev deps too
-uv run pytest                        # full suite
-uv run pytest tests/test_config.py   # one file
-uv run pytest -k redact              # one pattern
-uv run pytest -q -x                  # quiet, stop at first failure
-uv run ruff check .                  # lint
-uv run ruff format .                 # format (run before finishing any section)
-uv run ruff format --check .         # verify formatting
-uv run python -m scry                # run the CLI
+uv sync                                        # create/refresh the env, installs dev deps too
+uv run python -m pytest                        # full suite
+uv run python -m pytest tests/test_config.py   # one file
+uv run python -m pytest -k redact              # one pattern
+uv run python -m pytest -q -x                  # quiet, stop at first failure
+uv run python -m ruff check .                  # lint
+uv run python -m ruff format .                 # format (before finishing any section)
+uv run python -m ruff format --check .         # verify formatting
+uv run python -m scry                          # run the CLI
 ```
 
-**Use `python -m scry`, not `scry`.** The generated `scry.exe` shim is unsigned, and Windows
-Smart App Control (enforced on the dev machine) blocks it. This is exactly why
-`src/scry/__main__.py` exists. It also affects end users on Windows 11 — the eventual fix is
-code-signing at distribution time, which is not yet scoped.
+**Always invoke through `python -m`, never the bare `scry` / `pytest` / `ruff` commands.**
+Those are unsigned `.exe` shims generated at install time, and Windows Smart App Control
+(enforced on the dev machine, `VerifiedAndReputablePolicyState = 1`) blocks them with
+`os error 4551`. The block is intermittent — a shim can work until `uv sync` regenerates it —
+so `python -m` is the only reliable form. This is exactly why `src/scry/__main__.py` exists.
+
+It also affects end users on Windows 11. The fix is code-signing at distribution time, which is
+not yet scoped.
 
 ---
 
@@ -152,6 +156,8 @@ Do not rediscover these.
 | Entropy-based secret detection in logs | Would redact every commit sha and UUID, destroying the logs' usefulness | Precise provider patterns only; entropy belongs in Pathologist (4.8) |
 | `PRAGMA foreign_keys` defaults to **OFF**, per connection | Every `REFERENCES` clause is decorative on any connection that missed it; orphan rows insert silently | Applied in `_apply_connection_pragmas`, which every connection goes through. A test asserts a violation actually raises |
 | `Connection.executescript` COMMITs first | It discards the transaction wrapping a migration, so a failure leaves the schema half-changed | `split_statements()` uses `sqlite3.complete_statement` and executes one statement at a time inside an explicit BEGIN |
+| Smart App Control blocks generated `.exe` shims | `uv run pytest` fails with `os error 4551`, intermittently — a shim can work until `uv sync` regenerates it | Always `uv run python -m <tool>` |
+| A context manager entered without being held | `writer(path).__enter__()` leaves the manager unreferenced, so GC closes the connection under you — surfaced as `Cannot operate on a closed database` | Use `connect_writer()` when a connection must outlive a `with` block |
 | `spawn` children cannot import the test module | Concurrency tests died with `ModuleNotFoundError: No module named 'tests'` before unpickling the target function | `pythonpath = ["."]` in pytest config — spawn hands the parent's `sys.path` to the child |
 | **Credential-shaped test fixtures block the push** | GitHub push protection rejected the first push over Slack- and Stripe-shaped strings in `tests/test_redact.py`. It also defeats same-line `"prefix-" + "body"` splitting | Fixtures are assembled from a prefix plus a generated body (`body()` in `tests/test_redact.py`) so no credential-shaped literal exists in the source. **Every Pathologist fixture from 4.8 onward must follow this.** Never click GitHub's "allow secret" link — for this project that is training yourself to ignore the exact signal you are building |
 | PowerShell wraps native stderr as an error | `git push` "fails" while actually succeeding | Read the output, not just the exit status; or use the Bash tool |
@@ -297,6 +303,30 @@ migration path for Phase 2's `002`.
 
 ---
 
+### ✅ 1.6 — Storage B: claim log & single-writer merge · +45 tests (288)
+
+**Built:** `storage/{claims,merge}.py` — the `Claim`/`Evidence` model, `append_claim(s)`,
+backpressure, and the batched drain from `claim_log` into `claims`. Added `util/clock.py` so the
+timestamp format is defined once.
+
+**Decided:** claim ids are a **hash of what the claim is about** — agent, type, target,
+assertion — and exclude confidence and evidence, which are its value rather than its identity.
+That makes 1.12's agent respawns and 8.5's incremental re-runs idempotent for free instead of
+needing a dedup pass · the agent is *in* the hash, so one agent restating collapses to one row
+while two agents claiming about the same file stay separate for 5.7 to corroborate · each batch
+merges rows **and** advances the checkpoint in one transaction, which is what makes crash
+recovery free · highest `seq` wins; §3.1's noisy-OR needs the confidence table and waits for 5.7
+· `status` survives an unchanged restatement but returns to `pending` when the assertion or
+confidence moved · **evidence snippets are redacted at construction**, so a secret never enters
+the graph at all rather than relying on 6.2 to catch it leaving · named `merge.py`, not the
+plan's `writer.py`, which would collide with `db.writer()`.
+
+**Leaves behind:** `append_claims()` for every Phase 2+ agent · `merge_claims()` for 1.11 to run
+as a supervised process · `pending_depth()`/`wait_for_capacity()` as the backpressure lever 1.11
+sets policy on · `Claim`/`Evidence` as the wire format for 1.11's message bus.
+
+---
+
 ## Progress: 8 phases, 93 sections
 
 Legend: ✅ done · ▶ next · ⬜ pending
@@ -309,8 +339,8 @@ Legend: ✅ done · ▶ next · ⬜ pending
 | 1.3 | Logging, error taxonomy, redaction filter | ✅ |
 | 1.4 | Workspace model, ID generation, resolution | ✅ |
 | 1.5 | Storage A — schema, connection, WAL, migrations | ✅ |
-| 1.6 | Storage B — claim log & single-writer merge | ▶ |
-| 1.7 | CLI parser & router | ⬜ |
+| 1.6 | Storage B — claim log & single-writer merge | ✅ |
+| 1.7 | CLI parser & router | ▶ |
 | 1.8 | `scry init` | ⬜ |
 | 1.9 | `scry doctor` v1 | ⬜ |
 | 1.10 | Test harness & synthetic git repo builder | ⬜ |
