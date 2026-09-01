@@ -63,6 +63,16 @@ def _covers(target: Path, cwd: Path) -> bool:
     return norm_cwd == norm_target or norm_target in norm_cwd.parents
 
 
+def same_path(first: Path, second: Path) -> bool:
+    """Whether two paths refer to the same location under the platform's rules.
+
+    Public so `scry init` can detect a duplicate target without reimplementing
+    the case handling, which differs between Windows and POSIX and is exactly the
+    kind of thing that drifts when it exists in two places.
+    """
+    return _normcase(first) == _normcase(second)
+
+
 # ---------------------------------------------------------------------------
 # Creation
 # ---------------------------------------------------------------------------
