@@ -33,31 +33,9 @@ from scry.workspace import (
     validate_workspace_name,
     workspaces_dir,
 )
+from tests.fixtures.cli import snapshot
 
-
-@pytest.fixture
-def home(tmp_path):
-    """An isolated Scry home, so no test touches a real one."""
-    return tmp_path / "scry_home"
-
-
-@pytest.fixture
-def repo(tmp_path):
-    """A stand-in for the repository under analysis, with content to protect."""
-    directory = tmp_path / "target repo"  # deliberately contains a space
-    (directory / "src").mkdir(parents=True)
-    (directory / "src" / "app.py").write_text("print('hello')\n", encoding="utf-8")
-    (directory / "README.md").write_text("# demo\n", encoding="utf-8")
-    return directory
-
-
-def snapshot(directory):
-    """Every file under `directory` with its bytes, for before/after comparison."""
-    return {
-        str(p.relative_to(directory)): p.read_bytes()
-        for p in sorted(directory.rglob("*"))
-        if p.is_file()
-    }
+# `home` and `repo` come from conftest, shared with the command test modules.
 
 
 # ---------------------------------------------------------------------------
