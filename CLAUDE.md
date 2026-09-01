@@ -156,6 +156,8 @@ Do not rediscover these.
 | Entropy-based secret detection in logs | Would redact every commit sha and UUID, destroying the logs' usefulness | Precise provider patterns only; entropy belongs in Pathologist (4.8) |
 | `PRAGMA foreign_keys` defaults to **OFF**, per connection | Every `REFERENCES` clause is decorative on any connection that missed it; orphan rows insert silently | Applied in `_apply_connection_pragmas`, which every connection goes through. A test asserts a violation actually raises |
 | `Connection.executescript` COMMITs first | It discards the transaction wrapping a migration, so a failure leaves the schema half-changed | `split_statements()` uses `sqlite3.complete_statement` and executes one statement at a time inside an explicit BEGIN |
+| **Never round-trip a source file through PowerShell** | `Get-Content -Raw` reads UTF-8 as the system ANSI codepage and `Set-Content` writes the mangled bytes back, turning `—` into `â€"` silently. It corrupted `router.py` once already | Use Edit/Write for file content. Reserve PowerShell for running commands |
+| argparse calls `sys.exit()` on a parse error | Escapes the router, so `main(argv)` raises instead of returning, and its message bypasses the Console and `--no-color` | `CommandParser` in `cli/router.py` overrides `exit` and `_print_message` |
 | Smart App Control blocks generated `.exe` shims | `uv run pytest` fails with `os error 4551`, intermittently — a shim can work until `uv sync` regenerates it | Always `uv run python -m <tool>` |
 | A context manager entered without being held | `writer(path).__enter__()` leaves the manager unreferenced, so GC closes the connection under you — surfaced as `Cannot operate on a closed database` | Use `connect_writer()` when a connection must outlive a `with` block |
 | `spawn` children cannot import the test module | Concurrency tests died with `ModuleNotFoundError: No module named 'tests'` before unpickling the target function | `pythonpath = ["."]` in pytest config — spawn hands the parent's `sys.path` to the child |
@@ -354,6 +356,34 @@ already proven on two commands.
 
 ---
 
+### ✅ 1.8 — `scry init` · +43 tests (366)
+
+**Built:** `cli/commands/init.py`, `RESERVED_COMMAND_NAMES` in the registry,
+`workspace.same_path()`, and `CommandParser` in the router.
+
+**Decided:** the **database is created after the marker**, and that is the model rather than a
+gap: the marker is identity (written once, presence = complete workspace), the database is a
+rebuildable cache `initialise_database()` can recreate at any time · **`--force` adds a
+workspace and never overwrites one** — a flag that could silently destroy completed analysis
+with no undo is not worth having · reserved names cover all ~21 *planned* commands, not just the
+one registered, so a workspace named `doctor` today cannot shadow `scry doctor` next week ·
+`--mode standard|pro` gets a migration message naming what replaced it · a non-git target warns
+rather than refuses, since Oracle, Pathologist and Semiotician all work without git · name
+errors return exit 2, not `WorkspaceError`'s exit 3, because a typo in an argument is not a
+missing workspace · §5's `Session DB` and `Knowledge Graph` lines collapse to one `Database`
+line, and `Mode: auto` says "backend detected at run time" rather than inventing a claim.
+
+**Fixed in the router:** argparse called `sys.exit()` on a parse error, escaping the router and
+writing to the real stderr — so `main(argv)` raised instead of returning and the message bypassed
+`--no-color`. `CommandParser` overrides `exit` and `_print_message` so every usage error now
+returns a code through the Console.
+
+**Leaves behind:** working `scry init` for 1.9's doctor to diagnose and 3.7's `scry map` to
+consume · `CommandParser` for every later command's arguments · `RESERVED_COMMAND_NAMES` to
+extend as commands land.
+
+---
+
 ## Progress: 8 phases, 93 sections
 
 Legend: ✅ done · ▶ next · ⬜ pending
@@ -368,8 +398,8 @@ Legend: ✅ done · ▶ next · ⬜ pending
 | 1.5 | Storage A — schema, connection, WAL, migrations | ✅ |
 | 1.6 | Storage B — claim log & single-writer merge | ✅ |
 | 1.7 | CLI parser & router | ✅ |
-| 1.8 | `scry init` | ▶ |
-| 1.9 | `scry doctor` v1 | ⬜ |
+| 1.8 | `scry init` | ✅ |
+| 1.9 | `scry doctor` v1 | ▶ |
 | 1.10 | Test harness & synthetic git repo builder | ⬜ |
 | 1.11 | Runtime harness (multiprocessing, message bus) | ⬜ |
 | 1.12 | Conductor v1 (rule engine, state machine) | ⬜ |
