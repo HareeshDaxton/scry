@@ -8,69 +8,23 @@ which is the point at which it would be easiest to accidentally break.
 
 from __future__ import annotations
 
-import io
 import json
 import subprocess
 import sys
 
 import pytest
 
-from scry.cli.colors import strip_ansi
 from scry.cli.registry import RESERVED_COMMAND_NAMES, command_names
-from scry.cli.router import run
 from scry.storage import reader
 from scry.util.errors import ExitCode
-from scry.util.logging import reset_logging
 from scry.workspace import create_workspace, resolve_workspace
+from tests.fixtures.cli import invoke, snapshot
 
 CORE_TABLES = frozenset(
     {"schema_version", "session_state", "agent_state", "claim_log", "claims", "merge_checkpoint"}
 )
 
-
-@pytest.fixture(autouse=True)
-def isolated_logging():
-    reset_logging()
-    yield
-    reset_logging()
-
-
-@pytest.fixture
-def home(tmp_path):
-    return tmp_path / "scry_home"
-
-
-@pytest.fixture
-def repo(tmp_path):
-    """A stand-in repository, with a .git marker and content to protect."""
-    directory = tmp_path / "legacy platform"
-    (directory / "src").mkdir(parents=True)
-    (directory / ".git").mkdir()
-    (directory / "src" / "app.py").write_text("print('hi')\n", encoding="utf-8")
-    (directory / "README.md").write_text("# demo\n", encoding="utf-8")
-    return directory
-
-
-class Result:
-    def __init__(self, code, out, err):
-        self.code = code
-        self.out = strip_ansi(out)
-        self.err = strip_ansi(err)
-        self.raw_out = out
-
-
-def invoke(argv, *, home) -> Result:
-    out, err = io.StringIO(), io.StringIO()
-    code = run(argv, home=home, env={}, stdout=out, stderr=err)
-    return Result(code, out.getvalue(), err.getvalue())
-
-
-def snapshot(directory):
-    return {
-        str(p.relative_to(directory)): p.read_bytes()
-        for p in sorted(directory.rglob("*"))
-        if p.is_file()
-    }
+# `home`, `repo` and the autouse logging isolation come from conftest.
 
 
 # ---------------------------------------------------------------------------
