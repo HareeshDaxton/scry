@@ -41,6 +41,11 @@ class Command:
 
 COMMANDS: tuple[Command, ...] = (
     Command(
+        name="doctor",
+        summary="Diagnose the installation and workspaces",
+        module="scry.cli.commands.doctor",
+    ),
+    Command(
         name="init",
         summary="Create a workspace for a repository",
         module="scry.cli.commands.init",
