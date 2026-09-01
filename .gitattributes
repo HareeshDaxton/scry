@@ -1,0 +1,22 @@
+# Line-ending policy: LF in the repository and LF on checkout, everywhere.
+#
+# This is load-bearing, not hygiene. Two things depend on it:
+#
+#   * Golden-file tests (section 2.11 onward) compare exact command output.
+#     If expected-output files carry CRLF on Windows and LF in CI, every one
+#     of them fails with a diff that is invisible on screen.
+#   * Section 3.6 requires the Onboarding Brief to render byte-identically
+#     across runs. That determinism is what section 6.10 later relies on to
+#     prove the lite/cloud content-identity claim.
+#
+# Git for Windows converts LF to CRLF on checkout by default, so this must be
+# stated explicitly rather than assumed.
+* text=auto eol=lf
+
+# Files that must never be line-ending converted.
+*.png  binary
+*.jpg  binary
+*.ico  binary
+*.db   binary
+*.pack binary
+*.idx  binary

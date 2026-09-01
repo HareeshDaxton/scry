@@ -1,0 +1,93 @@
+[project]
+name = "scry"
+description = "Terminal-native software archaeology. Maps unknown codebases before you know what to ask."
+readme = "README.md"
+authors = [{ name = "Hareesh" }]
+keywords = ["code-analysis", "software-archaeology", "onboarding", "git", "tui"]
+
+# The floor we promise users, deliberately lower than the interpreter we
+# develop on (see .python-version). Our target user is a developer dropped into
+# a legacy codebase on whatever machine their employer gave them; requiring an
+# interpreter released last year would exclude a large share of them.
+# `ruff --target-version py311` is what keeps us honest about this.
+requires-python = ">=3.11"
+
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Quality Assurance",
+]
+
+# Single-sourced from src/scry/__init__.py so `scry --version` can never
+# disagree with what pip installed.
+dynamic = ["version"]
+
+dependencies = [
+    # Core path — imported on every run.
+    "PyYAML>=6.0",      # config.yaml loading                    (first used: 1.2)
+
+    # Leaf dependencies — must be imported inside the functions that use them,
+    # never at module scope. Enforced by tests/test_import_hygiene.py.
+    "Jinja2>=3.1",      # Onboarding Brief templates             (first used: 3.6)
+    "networkx>=3.0",    # coupling graph, PageRank               (first used: 3.2)
+    "textual>=0.47",    # terminal UI                            (first used: 5.12)
+]
+
+[project.scripts]
+scry = "scry.cli.main:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "src/scry/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/scry"]
+
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+# We develop on 3.13 but promise 3.11. Without this, the interpreter happily
+# accepts 3.12+ syntax that would crash for a third of our users, and nothing
+# would catch it until someone else's terminal. This line is the safety net.
+target-version = "py311"
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # import sorting
+    "N",    # pep8 naming
+    "UP",   # pyupgrade
+    "B",    # bugbear
+    "C4",   # comprehensions
+    "SIM",  # simplify
+    "RUF",  # ruff-specific
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests legitimately use bare asserts and long descriptive names.
+"tests/**" = ["S101"]
+
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# --import-mode=importlib is the recommended mode for src layouts: it stops
+# pytest from mutating sys.path, which would otherwise let tests import the
+# source tree directly and defeat the point of using src/ at all.
+addopts = "-ra --strict-markers --import-mode=importlib"

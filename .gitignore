@@ -1,0 +1,37 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Scry's own runtime data, in case scry is ever run against its own repo.
+# Never commit a workspace: it contains a session database and analysis output.
+.scry/
+scry_home/
+
+# Benchmark and evaluation artifacts. Corpus repos are cached locally and
+# pinned by sha in bench/corpus.lock.json, which *is* committed.
+bench/.cache/
+eval/out/
+
+# Editors
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
