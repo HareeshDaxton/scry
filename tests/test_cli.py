@@ -18,43 +18,12 @@ import pytest
 from scry import __version__
 from scry.cli.colors import strip_ansi, supports_color
 from scry.cli.registry import COMMANDS, find_command, suggest
-from scry.cli.router import EXIT_INTERRUPTED, run
+from scry.cli.router import EXIT_INTERRUPTED
 from scry.util.errors import ExitCode
-from scry.util.logging import reset_logging
 from scry.workspace import create_workspace
+from tests.fixtures.cli import invoke
 
-
-@pytest.fixture(autouse=True)
-def isolated_logging():
-    reset_logging()
-    yield
-    reset_logging()
-
-
-@pytest.fixture
-def home(tmp_path):
-    return tmp_path / "scry_home"
-
-
-@pytest.fixture
-def repo(tmp_path):
-    directory = tmp_path / "target"
-    (directory / "src").mkdir(parents=True)
-    return directory
-
-
-class Result:
-    def __init__(self, code: int, out: str, err: str) -> None:
-        self.code = code
-        self.out = strip_ansi(out)
-        self.err = strip_ansi(err)
-        self.raw_out = out
-
-
-def invoke(argv, *, home=None, env=None) -> Result:
-    out, err = io.StringIO(), io.StringIO()
-    code = run(argv, home=home, env={} if env is None else env, stdout=out, stderr=err)
-    return Result(code, out.getvalue(), err.getvalue())
+# `home`, `repo` and the autouse logging isolation come from conftest.
 
 
 # ---------------------------------------------------------------------------
