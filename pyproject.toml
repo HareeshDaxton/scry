@@ -91,3 +91,10 @@ testpaths = ["tests"]
 # pytest from mutating sys.path, which would otherwise let tests import the
 # source tree directly and defeat the point of using src/ at all.
 addopts = "-ra --strict-markers --import-mode=importlib"
+
+# Puts the repository root — not src/ — on sys.path, so `import tests` works.
+# Needed because the concurrency tests spawn real worker processes, and the
+# spawn start method hands the parent's sys.path to the child, which must be
+# able to import the test module to unpickle the target function. `import scry`
+# still resolves from the installed package, so the src-layout guarantee holds.
+pythonpath = ["."]
