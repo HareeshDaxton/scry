@@ -32,7 +32,10 @@ def test_main_returns_success_exit_code(capsys) -> None:
 
 def test_main_accepts_an_explicit_argv() -> None:
     # main() must never require sys.argv monkeypatching to be testable.
-    assert main(["--anything"]) == 0
+    # Section 1.1's stub ignored every argument; since 1.7 the router parses
+    # them, so this asserts the argv is genuinely honoured rather than dropped.
+    assert main(["--version"]) == 0
+    assert main(["--not-an-option"]) == 2  # ExitCode.USAGE
 
 
 def test_python_dash_m_entry_point_works() -> None:
