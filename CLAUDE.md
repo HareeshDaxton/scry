@@ -60,6 +60,11 @@ code-signing at distribution time, which is not yet scoped.
 - **One section at a time.** Work proceeds strictly 1.1 → 1.2 → … → 8.9. Before implementing,
   explain the section in detail and get explicit approval. A section is done only when its
   tests pass, lint and format are clean, and no earlier test regresses.
+- **Update this file at the end of every section — before reporting completion.** Add the
+  section's entry to *Implementation log*, flip its row in the phase table, move the ▶ marker to
+  the next section, and add any newly discovered trap to *Gotchas already paid for*. The log is
+  what lets a fresh session know what already exists without reading every file, so it is part
+  of the section's deliverable, not an afterthought.
 
 ---
 
@@ -102,6 +107,16 @@ silently miss every agent's records.
 The schema has no `api_key` field anywhere, and a test walks the dataclass tree to prove it.
 Keys live in the OS keyring (section 6.4). The v2 spec showed keys in `config.yaml`; that was
 deliberately overruled — a key in a YAML file eventually gets committed to a repository.
+
+### Scry never writes into the repository it analyses
+
+Workspaces live under `~/.scry/workspaces/`, never beside the target repo. The
+spec contradicts itself here — §5 implies a marker in the repo, §6.1 puts it in
+the workspace — and §6.1 wins, because the realistic user is studying a
+repository they do not own. "Which workspace am I in?" is answered by matching
+cwd against each marker's recorded `target_path`, not by walking up for a file.
+`tests/test_workspace.py` snapshots the target directory and asserts it is
+byte-identical afterwards.
 
 ### Git access is subprocess-only
 
@@ -167,6 +182,93 @@ Only what is not obvious from the tree.
 | `util/errors.py` | `ScryError` hierarchy. **Exit codes live on the classes**, not in a CLI mapping table a new subclass could be forgotten from. |
 | `util/redact.py` | Last-resort log safety net. *Not* the secret detector. |
 | `util/logging.py` | `setup_logging`, `reset_logging`, and `bootstrap()` — which resolves the ordering problem that logging needs config while config wants to log. |
+| `workspace/ids.py` | Names normalise to lowercase (Windows filesystems are case-insensitive) and **reject Windows reserved device names** (`con`, `nul`, `com1`…), which otherwise fail as an unrelated filesystem error. Ids use base32, whose alphabet omits `0`,`1`,`8`,`9` — no `0`/`O` confusion when retyping. |
+| `workspace/manager.py` | Creation writes the marker **last**, so the marker's presence *is* the definition of a complete workspace and an interrupted run leaves detectable debris. Id collisions are handled by checking the directory and regenerating, not by bigger numbers. |
+
+---
+
+## Implementation log
+
+What each completed section actually delivered, and what it leaves behind for later ones to
+use. Appended to as each section finishes.
+
+*Maintenance rule: keep full entries for the phase in progress. When a phase completes, compress
+its entries into a single paragraph so this section does not grow without bound across 93
+sections.*
+
+---
+
+### ✅ 1.1 — Project scaffolding & repo hygiene · 8 tests
+
+**Built:** `src/` layout, hatchling build, `scry` console script and `python -m scry`,
+ruff + pytest config, `.gitignore`, `.gitattributes`, `README.md`.
+
+**Decided:** `requires-python >=3.11` although development is on 3.13, with
+`ruff target-version = "py311"` as the net that stops 3.12+ syntax reaching users · all four
+runtime dependencies declared up front, so a missing wheel surfaces now rather than mid-Phase 5
+(all resolved cleanly on 3.13) · `.gitattributes` pins LF, which the golden-file tests from 2.11
+and the byte-identical brief from 3.6 both depend on.
+
+**Leaves behind:** `scry.__version__` · a working `main()` stub at `scry.cli.main` for 1.7 to
+replace · the import-hygiene test that every later section inherits.
+
+---
+
+### ✅ 1.2 — Config system · +45 tests (53)
+
+**Built:** `config/{defaults,schema,loader}.py` — five-layer merge (defaults → global yaml →
+workspace yaml → `SCRY_*` env → CLI flags), frozen dataclasses, per-value provenance.
+Also created `util/errors.py` with `ScryError` + `ConfigError`, since the loader needed them
+before 1.3 existed.
+
+**Decided:** layers merge as **plain dicts** and the typed `Config` is built once at the end —
+per-layer construction would make "explicitly set" indistinguishable from "defaulted" ·
+provenance tracking, which gives error messages their filename for free · unknown keys warn
+rather than fail · **no `api_key` field anywhere**, overruling §18.1 in favour of §8's
+keyring-only rule · salience weights accept any non-negative values and normalise at use, so
+3.9's sweep is "vary one number".
+
+**Leaves behind:** `load_config()` with a `workspace_path` parameter 1.8 will fill, a
+`cli_overrides` parameter 1.7 will fill, and an `on_warning` sink 1.3 routes to the logger ·
+every tunable for Archivist, Salience, Skeptic, storage, security and TUI already named and
+validated · a pickle round-trip test that 1.11 depends on.
+
+---
+
+### ✅ 1.3 — Logging, error taxonomy, redaction filter · +81 tests (134)
+
+**Built:** `util/redact.py` (`RedactingFilter` + provider patterns), `util/logging.py`
+(`setup_logging`, `reset_logging`, `bootstrap`), and the remaining five exception types with
+`ExitCode`.
+
+**Decided:** the filter attaches to **handlers, not loggers**, the only placement that sees
+child loggers' records · records are formatted eagerly so secrets are caught in `msg`, `args`
+**and tracebacks** · precise provider patterns with no entropy, so commit shas and UUIDs survive
+· exit codes live on the exception classes so a future subclass cannot be forgotten from a
+mapping table · `bootstrap()` buffers config warnings and replays them once the logger exists.
+
+**Leaves behind:** `bootstrap()` as the standard startup path for 1.7 · `console=False` for the
+TUI in 5.12 · `GitError(command=, stderr=)` ready for 2.1 · a docstring warning that 1.11 must
+add `setup_worker_logging(queue)` before spawning.
+
+---
+
+### ✅ 1.4 — Workspace model, ID generation, resolution · +80 tests (214)
+
+**Built:** `workspace/{ids,paths,marker,manager}.py` — create, resolve by three routes, list,
+and detect incomplete workspaces. Moved `scry_home()` into `util/paths.py`.
+
+**Decided:** the marker lives **workspace-side**, resolving the §5/§6.1 contradiction in favour
+of never writing into the analysed repo · 8-character base32 ids per the documented format, with
+collisions handled by checking the directory rather than by more entropy · names lowercase and
+Windows device names refused · the marker is written **last**, so its presence defines a
+complete workspace · `mode` defaults to `"auto"` because §7 makes backends detected, not fixed
+at creation.
+
+**Leaves behind:** `Workspace.paths.session_db` and `.graph_db` for 1.5 to create ·
+`resolve_workspace()` for 1.7's router · `create_workspace()` for 1.8's `scry init` ·
+`find_incomplete_workspaces()` for 1.9's `doctor` · `workspace.paths.config` as the
+`workspace_path` 1.2's loader has been waiting for.
 
 ---
 
@@ -180,8 +282,8 @@ Legend: ✅ done · ▶ next · ⬜ pending
 | 1.1 | Project scaffolding & repo hygiene | ✅ |
 | 1.2 | Config system (5 layers, provenance, validation) | ✅ |
 | 1.3 | Logging, error taxonomy, redaction filter | ✅ |
-| 1.4 | Workspace model, ID generation, resolution | ▶ |
-| 1.5 | Storage A — schema, connection, WAL, migrations | ⬜ |
+| 1.4 | Workspace model, ID generation, resolution | ✅ |
+| 1.5 | Storage A — schema, connection, WAL, migrations | ▶ |
 | 1.6 | Storage B — claim log & single-writer merge | ⬜ |
 | 1.7 | CLI parser & router | ⬜ |
 | 1.8 | `scry init` | ⬜ |
