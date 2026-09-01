@@ -21,5 +21,12 @@ class Context:
     logger: logging.Logger
     console: Console
     home: Path | None = None
+    # Where configuration was actually loaded from, honouring --config. Carried
+    # here so `scry doctor` can report on the file the run really used rather
+    # than guessing at the default location.
+    config_path: Path | None = None
+    # Set when configuration could not be loaded and defaults were substituted.
+    # Only `scry doctor` is allowed to proceed in that state; see the router.
+    config_error: str | None = None
     json_output: bool = False
     verbose: bool = False
