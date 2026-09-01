@@ -7,13 +7,10 @@ turns one confusing failure into two.
 
 from __future__ import annotations
 
-import io
 import json
 
 import pytest
 
-from scry.cli.colors import strip_ansi
-from scry.cli.router import run
 from scry.diagnostics import Status, repair, run_checks
 from scry.diagnostics.checks import (
     WORKSPACES,
@@ -27,51 +24,17 @@ from scry.diagnostics.checks import (
     check_workspaces,
 )
 from scry.diagnostics.system import check_writable, human_bytes
-from scry.storage import initialise_database
 from scry.util.errors import ExitCode
-from scry.util.logging import reset_logging
 from scry.workspace import create_workspace
+from tests.fixtures.cli import invoke
 
-
-@pytest.fixture(autouse=True)
-def isolated_logging():
-    reset_logging()
-    yield
-    reset_logging()
+# `home`, `repo` and the autouse logging isolation come from conftest.
 
 
 @pytest.fixture
-def home(tmp_path):
-    return tmp_path / "scry_home"
-
-
-@pytest.fixture
-def repo(tmp_path):
-    directory = tmp_path / "repo"
-    (directory / "src").mkdir(parents=True)
-    (directory / ".git").mkdir()
-    return directory
-
-
-@pytest.fixture
-def workspace(home, repo):
-    created = create_workspace("demo-project", repo, home=home)
-    initialise_database(created.paths.database)
-    return created
-
-
-class Result:
-    def __init__(self, code, out, err):
-        self.code = code
-        self.out = strip_ansi(out)
-        self.err = strip_ansi(err)
-        self.raw_out = out
-
-
-def invoke(argv, *, home) -> Result:
-    out, err = io.StringIO(), io.StringIO()
-    code = run(argv, home=home, env={}, stdout=out, stderr=err)
-    return Result(code, out.getvalue(), err.getvalue())
+def workspace(initialised_workspace):
+    """Every test in this module wants a workspace that already has a database."""
+    return initialised_workspace
 
 
 def status_of(diagnosis, name) -> Status:
