@@ -33,6 +33,39 @@ Run 'scry <command> --help' for a command's own options.
 """
 
 
+class _ParserExitError(Exception):
+    """Raised instead of calling sys.exit when a command's parser rejects input."""
+
+    def __init__(self, status: int) -> None:
+        self.status = status
+        super().__init__(status)
+
+
+class CommandParser(argparse.ArgumentParser):
+    """An ArgumentParser that returns control instead of killing the process.
+
+    ``argparse`` calls ``sys.exit()`` on a parse error and writes to the real
+    ``sys.stderr``. Both are wrong here: ``main(argv)`` is documented to *return*
+    an exit code, and the Console owns every character the user sees so that
+    tests can capture output and ``--no-color`` is honoured. Overriding these two
+    hooks routes argparse's own messages through the same path as everything
+    else, and turns its exit into an ordinary return value.
+    """
+
+    def __init__(self, *args: Any, console: Console, **kwargs: Any) -> None:
+        self._console = console
+        super().__init__(*args, **kwargs)
+
+    def _print_message(self, message: str | None, file: Any = None) -> None:
+        if message:
+            self._console.err(message.rstrip())
+
+    def exit(self, status: int = 0, message: str | None = None) -> None:  # type: ignore[override]
+        if message:
+            self._print_message(message)
+        raise _ParserExitError(status)
+
+
 def build_global_parser() -> argparse.ArgumentParser:
     """Flags that apply to every command, wherever they appear on the line."""
     parser = argparse.ArgumentParser(prog=PROGRAM, add_help=False)
@@ -100,7 +133,7 @@ def _looks_like_workspace_reference(token: str, home: Path | None) -> bool:
     """Whether a token that is not a command should be treated as a workspace.
 
     An id-shaped token always is. A bare name only counts when a workspace of
-    that name actually exists — otherwise a mistyped command would be reported
+    that name actually exists - otherwise a mistyped command would be reported
     as a missing workspace, which explains nothing.
     """
     from scry.workspace import looks_like_workspace_id
@@ -219,6 +252,8 @@ def run(
 
         return _dispatch(token, command_argv, ctx, show_help=options.show_help)
 
+    except _ParserExitError as exc:
+        return exc.status
     except ScryError as exc:
         # Already explained: print it, record it, and use its own exit code so a
         # caller can tell "no such workspace" from a general failure.
@@ -250,8 +285,10 @@ def _dispatch(token: str, command_argv: list[str], ctx: Context, *, show_help: b
 
     if command is not None:
         module = load_module(command.module)
-        parser = argparse.ArgumentParser(
-            prog=f"{PROGRAM} {command.name}", description=command.summary
+        parser = CommandParser(
+            prog=f"{PROGRAM} {command.name}",
+            description=command.summary,
+            console=ctx.console,
         )
         if hasattr(module, "add_arguments"):
             module.add_arguments(parser)
@@ -261,7 +298,7 @@ def _dispatch(token: str, command_argv: list[str], ctx: Context, *, show_help: b
         args = parser.parse_args(command_argv)
         return int(module.run(args, ctx))
 
-    # Not a command. Commands win on a name collision — a command shadowed by
+    # Not a command. Commands win on a name collision - a command shadowed by
     # data is far more surprising than the reverse, and the full id form is
     # always available as an unambiguous escape hatch.
     if _looks_like_workspace_reference(token, ctx.home):
@@ -276,4 +313,11 @@ def _dispatch(token: str, command_argv: list[str], ctx: Context, *, show_help: b
     return ExitCode.USAGE
 
 
-__all__ = ["EXIT_INTERRUPTED", "PROGRAM", "build_global_parser", "render_help", "run"]
+__all__ = [
+    "EXIT_INTERRUPTED",
+    "PROGRAM",
+    "CommandParser",
+    "build_global_parser",
+    "render_help",
+    "run",
+]
