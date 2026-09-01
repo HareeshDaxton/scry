@@ -25,17 +25,22 @@ configured with ``propagate = False`` so records stop here.
 from __future__ import annotations
 
 import logging
-import os
 import sys
 from collections.abc import Mapping
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from scry.util.paths import scry_home
 from scry.util.redact import RedactingFilter
 
 if TYPE_CHECKING:  # pragma: no cover
     from scry.config import Config
+
+# Re-exported: section 1.3 introduced scry_home() here, and section 1.4 moved it
+# to util.paths so that workspace/ need not import from the logging module just
+# to locate a directory. Kept importable from here so existing callers still work.
+__all__ = ["ROOT_LOGGER_NAME", "bootstrap", "reset_logging", "scry_home", "setup_logging"]
 
 ROOT_LOGGER_NAME = "scry"
 
@@ -61,18 +66,6 @@ def _is_ours(handler: logging.Handler) -> bool:
 
 # Modules obtain loggers with `logging.getLogger(__name__)`, which yields names
 # like "scry.agents.archivist" that nest under ROOT_LOGGER_NAME automatically.
-
-
-def scry_home(env: Mapping[str, str] | None = None) -> Path:
-    """Return Scry's data directory: ``$SCRY_HOME`` or ``~/.scry``.
-
-    Logging needs a directory before section 1.4 defines the workspace path
-    model, so the minimal resolution lives here and 1.4 builds its full model
-    on top — the same seam ``errors.py`` used in section 1.2.
-    """
-    environ = env if env is not None else os.environ
-    raw = environ.get("SCRY_HOME")
-    return Path(raw).expanduser() if raw else Path.home() / ".scry"
 
 
 def setup_logging(
