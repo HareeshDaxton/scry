@@ -18,10 +18,10 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from scry.util.clock import utc_timestamp
 from scry.util.errors import WorkspaceError
 
 MARKER_SCHEMA_VERSION = 1
@@ -30,10 +30,6 @@ MARKER_SCHEMA_VERSION = 1
 # spec section 7 requires: modes are detected capability tiers, not a property
 # fixed when the workspace was created. The others pin a backend explicitly.
 VALID_MODES = ("auto", "lite", "local", "cloud")
-
-
-def utc_timestamp() -> str:
-    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 @dataclass(frozen=True)
