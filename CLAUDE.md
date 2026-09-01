@@ -156,6 +156,8 @@ Do not rediscover these.
 | Entropy-based secret detection in logs | Would redact every commit sha and UUID, destroying the logs' usefulness | Precise provider patterns only; entropy belongs in Pathologist (4.8) |
 | `PRAGMA foreign_keys` defaults to **OFF**, per connection | Every `REFERENCES` clause is decorative on any connection that missed it; orphan rows insert silently | Applied in `_apply_connection_pragmas`, which every connection goes through. A test asserts a violation actually raises |
 | `Connection.executescript` COMMITs first | It discards the transaction wrapping a migration, so a failure leaves the schema half-changed | `split_statements()` uses `sqlite3.complete_statement` and executes one statement at a time inside an explicit BEGIN |
+| `git log --follow` does not survive `--reverse` | Rename following lives in the history walk, so reversing it silently returns only the commits after the rename. Cost an hour chasing a fixture that was correct | `log()` in `tests/test_fixtures.py` takes `reverse=` rather than always adding it |
+| The spec's example id `legacy-monolith-a7f3k9m2` is **not a valid Scry id** | It contains `9`, which base32 excludes, so it cannot be generated and confuses any pattern matching real ids | Use ids from the real alphabet (`a-z`, `2-7`) in docs and fixtures |
 | `os.access(path, W_OK)` lies on Windows | It reports the read-only *attribute* and ignores ACLs, so it returns True for a directory you cannot write to | `diagnostics/system.check_writable()` writes a probe file and deletes it |
 | **Never round-trip a source file through PowerShell** | `Get-Content -Raw` reads UTF-8 as the system ANSI codepage and `Set-Content` writes the mangled bytes back, turning `—` into `â€"` silently. It corrupted `router.py` once already | Use Edit/Write for file content. Reserve PowerShell for running commands |
 | argparse calls `sys.exit()` on a parse error | Escapes the router, so `main(argv)` raises instead of returning, and its message bypasses the Console and `--no-color` | `CommandParser` in `cli/router.py` overrides `exit` and `_print_message` |
@@ -411,6 +413,30 @@ Conductor to consume · `repair()` closing the missing-database gap 1.8 leaves o
 
 ---
 
+### ✅ 1.10 — Test harness & fixtures · +30 tests (435)
+
+**Built:** `tests/fixtures/{gitrepo,cli,golden}.py` and `tests/conftest.py` — a synthetic git
+repository builder, shared CLI invocation helpers, and golden-file comparison. Removed the
+duplicated fixtures from `test_cli`, `test_init`, `test_doctor`, `test_logging` and
+`test_workspace`.
+
+**Decided:** repositories are built with **`git fast-import`**, one process for a whole history —
+per-commit subprocesses cost 20-40 ms each on Windows and would put fifty commits at three to
+five seconds against a one-second target · built with **real git** rather than hand-written
+objects, so our fixtures cannot diverge from what git actually reads · timestamps are
+**`days_ago` relative to a fixed `REFERENCE_TIME`**, because a fixture on absolute dates would
+make 2.5's decay assertions drift with the calendar · `core.autocrlf=false` in every built repo,
+or Windows rewrites the bytes every content assertion compares · the builder is verified **by
+`git log`**, never by our own parser, since checking a git-writer with a git-reader we also wrote
+proves nothing.
+
+**Leaves behind:** `build_repo()`/`Commit`/`linear_history()` for every Phase 2 test ·
+`REFERENCE_TIME`, which **2.5's churn must accept as an injectable clock** · `invoke()`/`Result`/
+`snapshot()` shared by the command tests · `assert_golden()` with scrubbing for 2.11 and 3.6 ·
+`make_repo`, `workspace`, `initialised_workspace` fixtures · `--update-golden`.
+
+---
+
 ## Progress: 8 phases, 93 sections
 
 Legend: ✅ done · ▶ next · ⬜ pending
@@ -427,8 +453,8 @@ Legend: ✅ done · ▶ next · ⬜ pending
 | 1.7 | CLI parser & router | ✅ |
 | 1.8 | `scry init` | ✅ |
 | 1.9 | `scry doctor` v1 | ✅ |
-| 1.10 | Test harness & synthetic git repo builder | ▶ |
-| 1.11 | Runtime harness (multiprocessing, message bus) | ⬜ |
+| 1.10 | Test harness & synthetic git repo builder | ✅ |
+| 1.11 | Runtime harness (multiprocessing, message bus) | ▶ |
 | 1.12 | Conductor v1 (rule engine, state machine) | ⬜ |
 
 ### Phase 2 — Archivist & the git engine
