@@ -191,6 +191,9 @@ Only what is not obvious from the tree.
 | `util/errors.py` | `ScryError` hierarchy. **Exit codes live on the classes**, not in a CLI mapping table a new subclass could be forgotten from. |
 | `util/redact.py` | Last-resort log safety net. *Not* the secret detector. |
 | `util/logging.py` | `setup_logging`, `reset_logging`, and `bootstrap()` — which resolves the ordering problem that logging needs config while config wants to log. |
+| `cli/registry.py` | Command **metadata** only; the module is a string and nothing is imported until a command is selected. Register new commands here as their sections land, so `--help` lists only what works. |
+| `cli/router.py` | Global flags, dispatch, and failure→exit-code translation. Configures logging with `console=False` so `Console` owns all terminal output. |
+| `cli/output.py` | The results-on-stdout / everything-else-on-stderr rule. |
 | `workspace/ids.py` | Names normalise to lowercase (Windows filesystems are case-insensitive) and **reject Windows reserved device names** (`con`, `nul`, `com1`…), which otherwise fail as an unrelated filesystem error. Ids use base32, whose alphabet omits `0`,`1`,`8`,`9` — no `0`/`O` confusion when retyping. |
 | `workspace/manager.py` | Creation writes the marker **last**, so the marker's presence *is* the definition of a complete workspace and an interrupted run leaves detectable debris. Id collisions are handled by checking the directory and regenerating, not by bigger numbers. |
 
@@ -327,6 +330,30 @@ sets policy on · `Claim`/`Evidence` as the wire format for 1.11's message bus.
 
 ---
 
+### ✅ 1.7 — CLI parser & router · +35 tests (323)
+
+**Built:** `cli/{registry,router,context,output,colors}.py`, `cli/commands/{version,resume}.py`,
+and a thin `main.py`. Global flags, exit-code translation, colour detection, and the
+`scry <name>-<uid>` resume path.
+
+**Decided:** dispatch is a **registry of metadata with lazily imported handlers**, not argparse
+subparsers — subparsers need every command's arguments at startup, so `scry why` would import
+textual and NetworkX before printing a line · **`-v` is `--verbose`, `-V` is `--version`**,
+inverting §5 because `-v` means verbose across the whole toolchain and the spec's mapping is a
+trap for the exact user we build for · commands win a name collision with a workspace, with the
+full id as the escape hatch · an id-shaped token that misses exits 3, a non-id-shaped one exits
+2, so a typo reads as a typo · the router does load-config → setup-logging → replay itself
+rather than calling `bootstrap()`, with `console=False`, so the Console owns every character the
+user sees and tracebacks never reach the terminal · unexpected exceptions print a pointer to the
+log, and `--verbose` re-raises · CLI output stays ASCII, since console encodings vary on Windows.
+
+**Leaves behind:** `COMMANDS` for every later section to register into · `Context(config,
+logger, console, home, json_output, verbose)` as the handler contract · `Console` enforcing
+results-on-stdout · `AGENT_COLORS`/`SEMANTIC_COLORS` for the TUI in 5.12 · a `--json` path
+already proven on two commands.
+
+---
+
 ## Progress: 8 phases, 93 sections
 
 Legend: ✅ done · ▶ next · ⬜ pending
@@ -340,8 +367,8 @@ Legend: ✅ done · ▶ next · ⬜ pending
 | 1.4 | Workspace model, ID generation, resolution | ✅ |
 | 1.5 | Storage A — schema, connection, WAL, migrations | ✅ |
 | 1.6 | Storage B — claim log & single-writer merge | ✅ |
-| 1.7 | CLI parser & router | ▶ |
-| 1.8 | `scry init` | ⬜ |
+| 1.7 | CLI parser & router | ✅ |
+| 1.8 | `scry init` | ▶ |
 | 1.9 | `scry doctor` v1 | ⬜ |
 | 1.10 | Test harness & synthetic git repo builder | ⬜ |
 | 1.11 | Runtime harness (multiprocessing, message bus) | ⬜ |
