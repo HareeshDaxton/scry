@@ -156,6 +156,7 @@ Do not rediscover these.
 | Entropy-based secret detection in logs | Would redact every commit sha and UUID, destroying the logs' usefulness | Precise provider patterns only; entropy belongs in Pathologist (4.8) |
 | `PRAGMA foreign_keys` defaults to **OFF**, per connection | Every `REFERENCES` clause is decorative on any connection that missed it; orphan rows insert silently | Applied in `_apply_connection_pragmas`, which every connection goes through. A test asserts a violation actually raises |
 | `Connection.executescript` COMMITs first | It discards the transaction wrapping a migration, so a failure leaves the schema half-changed | `split_statements()` uses `sqlite3.complete_statement` and executes one statement at a time inside an explicit BEGIN |
+| `os.access(path, W_OK)` lies on Windows | It reports the read-only *attribute* and ignores ACLs, so it returns True for a directory you cannot write to | `diagnostics/system.check_writable()` writes a probe file and deletes it |
 | **Never round-trip a source file through PowerShell** | `Get-Content -Raw` reads UTF-8 as the system ANSI codepage and `Set-Content` writes the mangled bytes back, turning `—` into `â€"` silently. It corrupted `router.py` once already | Use Edit/Write for file content. Reserve PowerShell for running commands |
 | argparse calls `sys.exit()` on a parse error | Escapes the router, so `main(argv)` raises instead of returning, and its message bypasses the Console and `--no-color` | `CommandParser` in `cli/router.py` overrides `exit` and `_print_message` |
 | Smart App Control blocks generated `.exe` shims | `uv run pytest` fails with `os error 4551`, intermittently — a shim can work until `uv sync` regenerates it | Always `uv run python -m <tool>` |
@@ -384,6 +385,32 @@ extend as commands land.
 
 ---
 
+### ✅ 1.9 — `scry doctor` v1 · +39 tests (405)
+
+**Built:** `diagnostics/{checks,system}.py` and `cli/commands/doctor.py` — environment,
+resources, storage, backend and per-workspace checks, plus additive `--repair`.
+
+**Decided:** **no check may raise** — `_safe()` turns any exception into a FAIL, because a doctor
+that crashes while diagnosing turns one confusing failure into two · **`--repair` only adds**:
+it creates missing databases and directories and never deletes, so an incomplete workspace is
+reported with its path for the user to remove themselves · a **missing LLM backend is `OK`, not
+`WARN`** — lite is fully supported and yellow would teach every user they are degraded ·
+writability is tested by *writing*, since `os.access` reports the read-only attribute and ignores
+ACLs on Windows · RAM probed per-platform with stdlib rather than adding `psutil` · warnings do
+not fail the exit code, only failures do · a minimal `git --version` call here, with 2.1 owning
+the real git layer.
+
+**Fixed in the router:** an unloadable `config.yaml` crashed before dispatch, so `scry doctor`
+could not diagnose the one thing users most need it for. The failure is now captured on the
+Context; doctor alone proceeds, every other command stops with the error rather than silently
+running on substituted defaults.
+
+**Leaves behind:** `run_checks()`/`Diagnosis` for 6.1 to add real backend detection to and 1.12's
+Conductor to consume · `repair()` closing the missing-database gap 1.8 leaves open ·
+`Context.config_path`/`config_error` · `system.py` probes for the 2.12 benchmark harness.
+
+---
+
 ## Progress: 8 phases, 93 sections
 
 Legend: ✅ done · ▶ next · ⬜ pending
@@ -399,8 +426,8 @@ Legend: ✅ done · ▶ next · ⬜ pending
 | 1.6 | Storage B — claim log & single-writer merge | ✅ |
 | 1.7 | CLI parser & router | ✅ |
 | 1.8 | `scry init` | ✅ |
-| 1.9 | `scry doctor` v1 | ▶ |
-| 1.10 | Test harness & synthetic git repo builder | ⬜ |
+| 1.9 | `scry doctor` v1 | ✅ |
+| 1.10 | Test harness & synthetic git repo builder | ▶ |
 | 1.11 | Runtime harness (multiprocessing, message bus) | ⬜ |
 | 1.12 | Conductor v1 (rule engine, state machine) | ⬜ |
 

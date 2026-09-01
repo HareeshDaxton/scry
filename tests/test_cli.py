@@ -306,11 +306,26 @@ def test_config_warnings_do_not_pollute_stdout(home, tmp_path):
     assert "unknown configuration key" not in result.out
 
 
-def test_a_bad_config_file_reports_cleanly(home, tmp_path):
+def test_a_bad_config_file_stops_ordinary_commands(home, tmp_path):
+    """Substituting defaults silently would let an ignored setting look honoured."""
     config_file = tmp_path / "custom.yaml"
     config_file.write_text("skeptic:\n  batch_size: ten\n", encoding="utf-8")
-    with pytest.raises(Exception):  # noqa: B017 - raised before the router's handler
-        invoke(["--config", str(config_file), "version"], home=home)
+
+    result = invoke(["--config", str(config_file), "version"], home=home)
+    assert result.code == ExitCode.ERROR
+    assert "batch_size" in result.err
+    assert "scry doctor" in result.err
+    assert result.out == ""
+
+
+def test_a_bad_config_file_does_not_stop_doctor(home, tmp_path):
+    """Refusing to start the diagnostic because its subject is broken is absurd."""
+    config_file = tmp_path / "custom.yaml"
+    config_file.write_text("skeptic:\n  batch_size: ten\n", encoding="utf-8")
+
+    result = invoke(["--config", str(config_file), "doctor"], home=home)
+    assert result.code == ExitCode.ERROR  # the config is genuinely broken
+    assert "Environment" in result.out, "doctor still produced a full report"
 
 
 # ---------------------------------------------------------------------------
