@@ -197,7 +197,11 @@ def build_repo(
     run_git(["config", "core.autocrlf", "false"], cwd=path)
 
     if commits:
-        run_git(["fast-import", "--quiet", "--done"], cwd=path, stdin=build_stream(commits, reference=reference))
+        run_git(
+            ["fast-import", "--quiet", "--done"],
+            cwd=path,
+            stdin=build_stream(commits, reference=reference),
+        )
         run_git(["reset", "--hard", DEFAULT_BRANCH], cwd=path)
 
     return path
