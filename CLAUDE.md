@@ -150,6 +150,9 @@ Do not rediscover these.
 | pytest attaches `LogCaptureHandler` to the `scry` logger | An "is anything already configured?" guard sees it and skips setup entirely, leaving Scry silently unlogged | Handlers are tagged `_scry_owned_handler`; idempotency and teardown key on ownership |
 | Secrets hide in three places in a `LogRecord` | `msg`, `args`, and **tracebacks** — `raise ValueError(f"bad {t}")` puts the value in none of the first two | `RedactingFilter` formats eagerly and scrubs `exc_text`/`stack_info` |
 | Entropy-based secret detection in logs | Would redact every commit sha and UUID, destroying the logs' usefulness | Precise provider patterns only; entropy belongs in Pathologist (4.8) |
+| `PRAGMA foreign_keys` defaults to **OFF**, per connection | Every `REFERENCES` clause is decorative on any connection that missed it; orphan rows insert silently | Applied in `_apply_connection_pragmas`, which every connection goes through. A test asserts a violation actually raises |
+| `Connection.executescript` COMMITs first | It discards the transaction wrapping a migration, so a failure leaves the schema half-changed | `split_statements()` uses `sqlite3.complete_statement` and executes one statement at a time inside an explicit BEGIN |
+| `spawn` children cannot import the test module | Concurrency tests died with `ModuleNotFoundError: No module named 'tests'` before unpickling the target function | `pythonpath = ["."]` in pytest config — spawn hands the parent's `sys.path` to the child |
 | **Credential-shaped test fixtures block the push** | GitHub push protection rejected the first push over Slack- and Stripe-shaped strings in `tests/test_redact.py`. It also defeats same-line `"prefix-" + "body"` splitting | Fixtures are assembled from a prefix plus a generated body (`body()` in `tests/test_redact.py`) so no credential-shaped literal exists in the source. **Every Pathologist fixture from 4.8 onward must follow this.** Never click GitHub's "allow secret" link — for this project that is training yourself to ignore the exact signal you are building |
 | PowerShell wraps native stderr as an error | `git push` "fails" while actually succeeding | Read the output, not just the exit status; or use the Bash tool |
 | `git filter-branch` deprecation warning | Noisy but harmless | `FILTER_BRANCH_SQUELCH_WARNING=1` |
@@ -272,6 +275,28 @@ at creation.
 
 ---
 
+### ✅ 1.5 — Storage A: schema, connection, migrations · +29 tests (243)
+
+**Built:** `storage/{db,migrate}.py` and `migrations/001_core.sql` — WAL-configured connection
+factory, forward-only migration runner, and the core tables (`session_state`, `agent_state`,
+`claim_log`, `claims`, `merge_checkpoint`).
+
+**Decided:** **one database file, not two.** §6.1/§11.2 show `session.db` and `graph.db`
+separately; merged because every high-value analysis is a cross-domain join — salience over
+churn × complexity × ownership × exposure, CR-1, CR-9 — which is ordinary SQL in one file and an
+ATTACH dance across two. `paths.session_db`/`graph_db` became `paths.database` (`scry.db`) ·
+read-only connections make single-writer discipline structural, not remembered · migrations are
+forward-only, since a rebuildable cache does not justify reversible-migration machinery ·
+domain tables wait for the sections that own them, so Phase 2 becomes the runner's first real
+test.
+
+**Leaves behind:** `initialise_database()` for 1.8's `scry init` · `writer()`/`reader()` context
+managers and the `claim_log` → `claims` → `merge_checkpoint` trio for 1.6 · `agent_state` for
+1.11/1.12 · `session_state.last_analyzed_commit` as the anchor for 2.10 and 8.5 · a proven
+migration path for Phase 2's `002`.
+
+---
+
 ## Progress: 8 phases, 93 sections
 
 Legend: ✅ done · ▶ next · ⬜ pending
@@ -283,8 +308,8 @@ Legend: ✅ done · ▶ next · ⬜ pending
 | 1.2 | Config system (5 layers, provenance, validation) | ✅ |
 | 1.3 | Logging, error taxonomy, redaction filter | ✅ |
 | 1.4 | Workspace model, ID generation, resolution | ✅ |
-| 1.5 | Storage A — schema, connection, WAL, migrations | ▶ |
-| 1.6 | Storage B — claim log & single-writer merge | ⬜ |
+| 1.5 | Storage A — schema, connection, WAL, migrations | ✅ |
+| 1.6 | Storage B — claim log & single-writer merge | ▶ |
 | 1.7 | CLI parser & router | ⬜ |
 | 1.8 | `scry init` | ⬜ |
 | 1.9 | `scry doctor` v1 | ⬜ |
