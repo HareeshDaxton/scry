@@ -92,6 +92,12 @@ testpaths = ["tests"]
 # source tree directly and defeat the point of using src/ at all.
 addopts = "-ra --strict-markers --import-mode=importlib"
 
+# Spawning a process costs a few hundred milliseconds on Windows, so the
+# section 1.11 supervision tests dominate the suite's wall time. Marking them
+# lets `-m "not slow"` stay a fast inner loop without anyone having to remember
+# which file they live in.
+markers = ["slow: spawns real worker processes"]
+
 # Puts the repository root — not src/ — on sys.path, so `import tests` works.
 # Needed because the concurrency tests spawn real worker processes, and the
 # spawn start method hands the parent's sys.path to the child, which must be
