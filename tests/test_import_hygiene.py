@@ -80,6 +80,47 @@ def test_importing_the_logging_utilities_does_not_pull_in(leaf: str) -> None:
 
 
 @pytest.mark.parametrize("leaf", LEAF_DEPENDENCIES)
+def test_importing_the_runtime_does_not_pull_in(leaf: str) -> None:
+    """The runtime harness is stdlib only.
+
+    Every worker process re-imports it at spawn time, so an import added here is
+    paid once per agent per run rather than once per process.
+    """
+    code = f"import sys\nimport scry.runtime\nsys.exit(1 if {leaf!r} in sys.modules else 0)\n"
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, (
+        f"importing scry.runtime pulled in {leaf!r}. Move that import inside "
+        f"the function that needs it."
+    )
+
+
+def test_configuring_logging_does_not_import_multiprocessing() -> None:
+    """``multiprocessing`` is stdlib but not free, and every command pays for
+    ``util.logging``. Only ``start_log_listener`` needs it, and it imports it
+    itself."""
+    code = (
+        "import sys\n"
+        "import scry.util.logging\n"
+        "sys.exit(1 if 'multiprocessing' in sys.modules else 0)\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, (
+        "importing scry.util.logging pulled in multiprocessing; keep that import "
+        "inside start_log_listener()"
+    )
+
+
+@pytest.mark.parametrize("leaf", LEAF_DEPENDENCIES)
 def test_importing_the_config_package_does_not_pull_in(leaf: str) -> None:
     """Config loads on every command, including the sub-second fast paths."""
     code = f"import sys\nimport scry.config\nsys.exit(1 if {leaf!r} in sys.modules else 0)\n"
