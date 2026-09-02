@@ -10,16 +10,12 @@ as a library it must not hijack the host application's logging, and we do not
 want third-party DEBUG output flooding our file. The ``scry`` logger is
 configured with ``propagate = False`` so records stop here.
 
-.. warning::
-
-   ``RotatingFileHandler`` is **not multiprocess-safe**. Section 1.11 spawns
-   worker processes; two of them rotating this file simultaneously will lose
-   records or corrupt it, and Windows file locking makes that worse rather than
-   better. The correct architecture is a ``QueueHandler`` in each worker and a
-   single ``QueueListener`` in the parent performing the only real file write.
-   That is deliberately not built yet — there are no workers until 1.11 — but
-   **1.11 must add ``setup_worker_logging(queue)`` before spawning anything**.
-   This notice is the signpost on that trap.
+**Worker processes never write the log file.** ``RotatingFileHandler`` is not
+multiprocess-safe: two workers rotating the file at once lose records or corrupt
+it, and Windows file locking makes that worse rather than better. Section 1.11
+resolves this with :func:`start_log_listener` in the parent and
+:func:`setup_worker_logging` in each child, so exactly one process ever opens
+``scry.log`` for writing.
 """
 
 from __future__ import annotations
@@ -27,9 +23,10 @@ from __future__ import annotations
 import logging
 import sys
 from collections.abc import Mapping
-from logging.handlers import RotatingFileHandler
+from dataclasses import dataclass
+from logging.handlers import QueueHandler, QueueListener, RotatingFileHandler
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from scry.util.paths import scry_home
 from scry.util.redact import RedactingFilter
@@ -40,7 +37,16 @@ if TYPE_CHECKING:  # pragma: no cover
 # Re-exported: section 1.3 introduced scry_home() here, and section 1.4 moved it
 # to util.paths so that workspace/ need not import from the logging module just
 # to locate a directory. Kept importable from here so existing callers still work.
-__all__ = ["ROOT_LOGGER_NAME", "bootstrap", "reset_logging", "scry_home", "setup_logging"]
+__all__ = [
+    "ROOT_LOGGER_NAME",
+    "LogRelay",
+    "bootstrap",
+    "reset_logging",
+    "scry_home",
+    "setup_logging",
+    "setup_worker_logging",
+    "start_log_listener",
+]
 
 ROOT_LOGGER_NAME = "scry"
 
@@ -191,3 +197,101 @@ def bootstrap(
     for message in buffered:
         logger.warning("%s", message)
     return config, logger
+
+
+# ---------------------------------------------------------------------------
+# Multiprocess logging
+# ---------------------------------------------------------------------------
+@dataclass
+class LogRelay:
+    """A queue workers log into, and the parent-side thread that drains it.
+
+    Hand :attr:`queue` to a worker — never the relay itself. The queue is
+    picklable through a ``Process`` argument; the listener is a live thread and
+    is not.
+    """
+
+    queue: Any
+    listener: QueueListener
+    _stopped: bool = False
+
+    def stop(self) -> None:
+        """Flush and stop. Idempotent, because shutdown paths run twice."""
+        if self._stopped:
+            return
+        self._stopped = True
+        self.listener.stop()
+
+
+def start_log_listener(*, queue: Any | None = None, context: Any | None = None) -> LogRelay:
+    """Start the single thread that writes worker records to the log file.
+
+    The listener feeds the handlers already installed on the ``scry`` logger, so
+    a worker's records land in the same file, with the same format and the same
+    redaction, as the parent's own.
+
+    ``respect_handler_level`` is on: without it a worker's DEBUG records would
+    bypass the console handler's WARNING level and spray the terminal.
+
+    Must be stopped *after* every worker has been joined. Stopping it first
+    silently discards whatever the last worker logged on its way out — including,
+    typically, the traceback explaining why it died.
+    """
+    # Imported here rather than at module scope: `import scry.util.logging`
+    # happens on every command including the sub-second ones, and multiprocessing
+    # is not free to import. Only the runtime harness needs it.
+    import multiprocessing
+
+    if queue is None:
+        ctx = context if context is not None else multiprocessing.get_context("spawn")
+        queue = ctx.Queue()
+
+    logger = logging.getLogger(ROOT_LOGGER_NAME)
+    handlers = tuple(h for h in logger.handlers if _is_ours(h))
+    listener = QueueListener(queue, *handlers, respect_handler_level=True)
+    listener.start()
+    return LogRelay(queue=queue, listener=listener)
+
+
+def setup_worker_logging(queue: Any, *, level: str | int = logging.INFO) -> logging.Logger:
+    """Point this process's ``scry`` logger at the parent's log queue.
+
+    Called first thing in every worker, before it does any work at all.
+
+    Two details here are easy to get wrong and silent when wrong:
+
+    **The redaction filter belongs on this handler.** ``QueueHandler`` formats
+    the record before putting it on the queue, so a filter installed here scrubs
+    the record *before* it crosses the process boundary. Redacting only in the
+    parent would leave secrets sitting in a pipe buffer.
+
+    **The handler gets no formatter.** ``QueueHandler.prepare`` writes the
+    formatted message back into ``record.msg``; with a formatter attached, the
+    parent's file handler would then prefix its own timestamp, level and logger
+    name onto a line that already had them.
+
+    ``prepare`` also converts ``exc_info`` to text, because traceback objects are
+    not picklable — which means our filter has already redacted it, and the
+    section 1.3 trap of a secret hiding in a traceback stays closed across the
+    process boundary.
+    """
+    logger = logging.getLogger(ROOT_LOGGER_NAME)
+
+    # Every handler goes, not only ours. A spawned child starts with none, so in
+    # practice this is belt and braces; but under a `fork` start method a child
+    # inherits the parent's open RotatingFileHandler, which is the exact
+    # multiprocess-unsafe writer this function exists to prevent.
+    for existing in list(logger.handlers):
+        logger.removeHandler(existing)
+        if _is_ours(existing):
+            existing.close()
+
+    handler = QueueHandler(queue)
+    handler.addFilter(RedactingFilter())
+    setattr(handler, _OWNED, True)
+
+    resolved = logging.getLevelNamesMapping()[level] if isinstance(level, str) else level
+    logger.setLevel(resolved)
+    logger.propagate = False
+    logger.addHandler(handler)
+    return logger
