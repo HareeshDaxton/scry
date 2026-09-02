@@ -93,8 +93,10 @@ single deliberate exception.
 
 ### Config is frozen and must stay picklable
 
-Section 1.11 spawns worker processes. On Windows that is `spawn`, not `fork`, so each worker
-receives a **pickled copy** of the config. A mutable copy would let one worker diverge silently
+The runtime uses the `spawn` start method on **every** platform, not only Windows — so a
+picklability violation fails in CI rather than only on the dev machine, and no worker can
+inherit an open SQLite connection or log file. Each worker therefore receives a **pickled
+copy** of the config. A mutable copy would let one worker diverge silently
 from the others, producing analysis that differs by process with nothing in the logs to explain
 it. Every field must be a primitive, a tuple, or a nested frozen dataclass — no lambdas, no
 open handles. `tests/test_config.py` asserts a pickle round-trip.
@@ -167,6 +169,13 @@ Do not rediscover these.
 | **Credential-shaped test fixtures block the push** | GitHub push protection rejected the first push over Slack- and Stripe-shaped strings in `tests/test_redact.py`. It also defeats same-line `"prefix-" + "body"` splitting | Fixtures are assembled from a prefix plus a generated body (`body()` in `tests/test_redact.py`) so no credential-shaped literal exists in the source. **Every Pathologist fixture from 4.8 onward must follow this.** Never click GitHub's "allow secret" link — for this project that is training yourself to ignore the exact signal you are building |
 | PowerShell wraps native stderr as an error | `git push` "fails" while actually succeeding | Read the output, not just the exit status; or use the Bash tool |
 | `git filter-branch` deprecation warning | Noisy but harmless | `FILTER_BRANCH_SQUELCH_WARNING=1` |
+| `QueueHandler` writes the *formatted* message back into `record.msg` | Attach a formatter to it and the parent's file handler prefixes timestamp, level and logger name onto a line that already has them — every worker line doubled | `setup_worker_logging` deliberately sets no formatter. The parent's handlers own the format |
+| Stopping the log listener before joining workers | Silently discards whatever the last worker logged on its way out — which is typically the traceback explaining why it died | `AgentPool.shutdown()` joins every child, drains the bus, *then* stops the relay. The order is commented as load-bearing |
+| `heapq` / `PriorityQueue` over `(priority, message)` | Raises `TypeError: '<' not supported` the instant two priorities tie, because the tuple comparison falls through to the messages. Never happens in a small test, always happens under load | `dispatch_key()` returns the priority alone and is used with `list.sort`, which is stable — so arrival order survives and no message is ever compared |
+| `multiprocessing.Queue` pickles on a **background feeder thread** | An unpicklable payload raises *there*, prints to the worker's stderr, and the message simply never arrives. Nothing fails at the call site | `bus.Publisher` encodes to bytes eagerly, so the failure is a synchronous traceback naming the offending `publish` |
+| `terminate()` and Ctrl+C look exactly like crashes | `terminate()` yields `-SIGTERM` on POSIX and `1` on Windows; an interrupt yields 130. Counted naively, three Ctrl+Cs trip 1.12's three-strikes rule and permanently disable an agent that never failed | `AgentPool.reap()` skips crash accounting while `_shutting_down`, and treats `EXIT_INTERRUPTED` as a completion with `interrupted=True` |
+| A heartbeat on its own thread cannot detect a stall | The heartbeat keeps beating while the agent is wedged in a loop it will never leave, so 1.12's `agent_stalled` rule would have nothing to key on | Two clocks per agent: `last_heartbeat` (process alive) and `last_progress` (process working). `HeartbeatMonitor.silent()` and `.stalled()` are separate questions |
+| `--strict-markers` is on | A new `@pytest.mark.<name>` errors rather than warning | Register it under `markers` in `pyproject.toml` — `slow` is registered there for the process-spawning tests |
 
 Traps already anticipated in the plan, not yet reached:
 
@@ -178,9 +187,6 @@ Traps already anticipated in the plan, not yet reached:
   encoded in `config/defaults.py:BUGFIX_PATTERNS`.
 - **Bot filtering is mandatory** — left in, dependabot dominates churn and ownership on most
   real repositories and poisons every downstream metric.
-- **`RotatingFileHandler` is not multiprocess-safe** — 1.11 must add
-  `setup_worker_logging(queue)` before spawning anything. See the warning block in
-  `src/scry/util/logging.py`.
 
 ---
 
@@ -195,7 +201,11 @@ Only what is not obvious from the tree.
 | `config/loader.py` | Five-layer merge. Layers merge as **plain dicts**, and the typed `Config` is built **once** at the end — building per layer would make "explicitly set" indistinguishable from "defaulted". |
 | `util/errors.py` | `ScryError` hierarchy. **Exit codes live on the classes**, not in a CLI mapping table a new subclass could be forgotten from. |
 | `util/redact.py` | Last-resort log safety net. *Not* the secret detector. |
-| `util/logging.py` | `setup_logging`, `reset_logging`, and `bootstrap()` — which resolves the ordering problem that logging needs config while config wants to log. |
+| `util/logging.py` | `setup_logging`, `reset_logging`, and `bootstrap()` — which resolves the ordering problem that logging needs config while config wants to log. Also `start_log_listener()`/`setup_worker_logging()`: exactly one process ever opens `scry.log` for writing. |
+| `runtime/messages.py` | The wire format. Every factory sets its own priority, so "errors jump the queue" is a property of the message type rather than a convention each agent remembers. |
+| `runtime/bus.py` | One shared inbox up, one control queue per worker down. Workers never talk to each other, which is what keeps scheduling in one place. |
+| `runtime/agent.py` | `AgentProcess` (write `execute()`, get logging, heartbeat, crash capture and cooperative stop for free) and `run_agent`, the child entry point. |
+| `runtime/pool.py` | Mechanism only — spawn, reap, stop. Restart *policy* is 1.12's, which is what lets the supervision rules be tested without spawning anything. |
 | `cli/registry.py` | Command **metadata** only; the module is a string and nothing is imported until a command is selected. Register new commands here as their sections land, so `--help` lists only what works. |
 | `cli/router.py` | Global flags, dispatch, and failure→exit-code translation. Configures logging with `console=False` so `Console` owns all terminal output. |
 | `cli/output.py` | The results-on-stdout / everything-else-on-stderr rule. |
@@ -437,6 +447,41 @@ proves nothing.
 
 ---
 
+### ✅ 1.11 — Runtime harness (multiprocessing, message bus) · +63 tests (498)
+
+**Built:** `runtime/{messages,bus,agent,heartbeat,pool}.py` — the message wire format, topic
+routing with priority dispatch and a dead-letter queue, `AgentProcess` with crash capture and
+cooperative shutdown, the two-clock heartbeat monitor, and the process pool. Added
+`start_log_listener()`/`setup_worker_logging()` to `util/logging.py`, closing the warning block
+1.3 left there.
+
+**Decided:** the start method is **`spawn` on every platform**, not just Windows — uniform spawn
+costs startup time on Linux and buys the thing that matters more, that a picklability violation
+fails in CI rather than only on the dev machine · **claims go to the database, not over the
+bus**, narrowing 1.6's note: a queue is not durable, so a worker appends to the claim log and
+publishes only a `CLAIM_BATCH` notification of count and last seq · **mechanism here, policy in
+1.12** — the pool reports a crash and never decides whether to restart, so the Conductor's rules
+stay testable without spawning anything · `spawn()` **raises at the concurrency cap rather than
+queueing**, because a queue here would be a second scheduler with no rules · shutdown escalates
+**stop event → terminate → kill** and is idempotent, since shutdown paths genuinely run twice ·
+priority ordering is applied **on a drained batch in the parent**, because a pipe is FIFO and no
+argument changes that — claiming cross-process priority would have been a lie.
+
+**The design point 1.12 depends on:** the heartbeat runs on its own thread, so a *stalled* agent
+keeps beating perfectly. Heartbeat alone therefore cannot answer "is it doing anything", and
+1.12's `agent_stalled` rule would have had nothing to key on. Hence two clocks per agent —
+`last_heartbeat` for liveness, `last_progress` for work — and `silent()` / `stalled()` as
+separate questions with separate remedies.
+
+**Leaves behind:** `AgentProcess` as the base class 2.10's Archivist subclasses — write
+`execute(ctx)` and inherit logging, heartbeat, crash capture and stop handling ·
+`ctx.append_claims()` wiring 1.6's lever to a real backpressure policy · `AgentPool` +
+`HeartbeatMonitor` as exactly the inputs 1.12's rule table reads (`crash_count`, `silent()`,
+`stalled()`, `statuses()`) · `MessageBus` for 5.12's TUI to subscribe to · a registered `slow`
+pytest marker so `-m "not slow"` stays a fast inner loop.
+
+---
+
 ## Progress: 8 phases, 93 sections
 
 Legend: ✅ done · ▶ next · ⬜ pending
@@ -454,8 +499,8 @@ Legend: ✅ done · ▶ next · ⬜ pending
 | 1.8 | `scry init` | ✅ |
 | 1.9 | `scry doctor` v1 | ✅ |
 | 1.10 | Test harness & synthetic git repo builder | ✅ |
-| 1.11 | Runtime harness (multiprocessing, message bus) | ▶ |
-| 1.12 | Conductor v1 (rule engine, state machine) | ⬜ |
+| 1.11 | Runtime harness (multiprocessing, message bus) | ✅ |
+| 1.12 | Conductor v1 (rule engine, state machine) | ▶ |
 
 ### Phase 2 — Archivist & the git engine
 | § | Section | Status |
